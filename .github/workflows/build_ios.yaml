@@ -1,0 +1,85 @@
+name: Build iOS App
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "ios_v*"
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      # 签出代码
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      # 设置Flutter
+      - name: Flutter action
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.38.x"
+          cache: true
+
+      # 更新Flutter的packages
+      - name: Restore packages
+        run: |
+          cd simple_live_app
+          flutter pub get
+
+      # 打包iOS
+      - name: Build IPA
+        run: |
+          cd simple_live_app
+          flutter build ios --release --no-codesign
+
+      # 创建未签名ipa（完全移除签名以兼容 LiveContainer）
+      - name: Create IPA
+        run: |
+          cd simple_live_app
+          APP_PATH="build/ios/iphoneos/Runner.app"
+          
+          # 使用 codesign 移除主二进制文件的签名
+          codesign --remove-signature "$APP_PATH/Runner" || true
+          
+          # 移除所有 Framework 中的签名
+          find "$APP_PATH/Frameworks" -name "*.framework" -type d | while read framework; do
+            framework_name=$(basename "$framework" .framework)
+            if [ -f "$framework/$framework_name" ]; then
+              codesign --remove-signature "$framework/$framework_name" || true
+            fi
+          done
+          
+          # 移除所有 dylib 的签名
+          find "$APP_PATH" -name "*.dylib" -type f -exec codesign --remove-signature {} \; 2>/dev/null || true
+          
+          # 移除所有签名相关目录和文件
+          rm -rf "$APP_PATH/_CodeSignature"
+          rm -f "$APP_PATH/embedded.mobileprovision"
+          find "$APP_PATH/Frameworks" -name "_CodeSignature" -type d -exec rm -rf {} + 2>/dev/null || true
+          find "$APP_PATH/Frameworks" -name "embedded.mobileprovision" -delete 2>/dev/null || true
+          
+          # 创建 Payload 目录并复制 app
+          mkdir -p build/ios/iphoneos/Payload
+          cp -R "$APP_PATH" build/ios/iphoneos/Payload/Runner.app
+          
+          # 打包为 IPA
+          cd build/ios/iphoneos/
+          zip -q -r ios_no_sign.ipa Payload
+          cd ../../..
+
+      # 上传IPA至Artifacts
+      - name: Upload IPA to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: |
+            simple_live_app/build/ios/iphoneos/ios_no_sign.ipa
+
+      # 完成
+      - run: echo "🍏 iOS build job's status is ${{ job.status }}."
