@@ -88,26 +88,46 @@ jobs:
           cd simple_live_app
           flutter build ios --release --no-codesign
 
-      #创建兼容 LiveContainer 的 IPA
+      # 安装 ldid 签名工具
+      - name: Install ldid
+        run: |
+          brew install ldid
+
+      #创建兼容 SideStore/LiveContainer 的 IPA
       - name: Create IPA
         run: |
           cd simple_live_app
           APP_PATH="build/ios/iphoneos/Runner.app"
           
-          # 1. 移除之前的签名
+          # 1. 移除之前的签名和 mobileprovision
           rm -rf "$APP_PATH/_CodeSignature"
           rm -f "$APP_PATH/embedded.mobileprovision"
           
-          # 2. Strip 调试符号 (解决 ldid.cpp(1461) 错误的关键)
-          # 这减少了二进制大小并移除了可能导致 ldid 解析错误的符号表
-          strip "$APP_PATH/Runner"
-          find "$APP_PATH/Frameworks" -type f -perm +111 -exec strip {} \; 2>/dev/null || true
+          # 2. 移除所有 Frameworks 中的签名
+          find "$APP_PATH/Frameworks" -name "_CodeSignature" -type d -exec rm -rf {} + 2>/dev/null || true
+          find "$APP_PATH/Frameworks" -name "*.mobileprovision" -exec rm -f {} + 2>/dev/null || true
           
-          # 3. 使用 codesign 进行 Ad-Hoc 签名
-          # 生成标准的 Mach-O 签名结构
-          codesign -s - --force --deep --preserve-metadata=identifier,entitlements "$APP_PATH"
+          # 3. 使用 ldid 对所有 Framework 进行伪签名 (关键步骤)
+          # ldid 生成的签名格式与 SideStore 完全兼容
+          for framework in "$APP_PATH/Frameworks"/*.framework; do
+            if [ -d "$framework" ]; then
+              framework_name=$(basename "$framework" .framework)
+              binary_path="$framework/$framework_name"
+              if [ -f "$binary_path" ]; then
+                echo "Signing framework: $framework_name"
+                ldid -S "$binary_path"
+              fi
+            fi
+          done
           
-          # 4. 创建 Payload 并打包
+          # 4. 对 dylib 文件进行签名
+          find "$APP_PATH/Frameworks" -name "*.dylib" -exec ldid -S {} \; 2>/dev/null || true
+          
+          # 5. 对主二进制文件进行 ldid 签名
+          echo "Signing main binary: Runner"
+          ldid -S "$APP_PATH/Runner"
+          
+          # 6. 创建 Payload 并打包
           mkdir -p build/ios/iphoneos/Payload
           cp -R "$APP_PATH" build/ios/iphoneos/Payload/Runner.app
           
