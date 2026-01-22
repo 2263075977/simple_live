@@ -82,58 +82,70 @@ jobs:
       #       simple_live_app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
       #       simple_live_app/build/app/outputs/flutter-apk/app-x86_64-release.apk
 
-      #打包iOS - 禁用可能导致 ldid 问题的优化
-      - name: Build IPA
+      #打包iOS
+      - name: Build iOS App
         run: |
           cd simple_live_app
+          # 先用 flutter 构建，不签名
           flutter build ios --release --no-codesign --no-tree-shake-icons
 
-      #创建兼容 SideStore/LiveContainer 的 IPA
-      - name: Create IPA
+      # 安装 ldid 工具并创建正确签名的 IPA
+      - name: Install signing tools
+        run: |
+          brew install ldid
+
+      #创建兼容 SideStore 的 IPA (模拟砸壳应用的签名结构)
+      - name: Create properly signed IPA
         run: |
           cd simple_live_app
           APP_PATH="build/ios/iphoneos/Runner.app"
           
-          echo "=== Step 1: Removing existing signatures ==="
+          echo "=== Step 1: Clean up existing signatures ==="
           rm -rf "$APP_PATH/_CodeSignature"
           rm -f "$APP_PATH/embedded.mobileprovision"
-          
-          # 移除所有 Frameworks 中的签名
           find "$APP_PATH/Frameworks" -name "_CodeSignature" -type d -exec rm -rf {} + 2>/dev/null || true
           find "$APP_PATH/Frameworks" -name "*.mobileprovision" -exec rm -f {} + 2>/dev/null || true
           
-          echo "=== Step 2: Processing binaries to remove LC_CODE_SIGNATURE ==="
-          
-          # 使用 codesign 移除签名 (这会移除 LC_CODE_SIGNATURE)
-          # 然后不添加任何新签名，让侧载工具自己处理
-          
-          # 处理主二进制
-          echo "Processing main binary: Runner"
-          codesign --remove-signature "$APP_PATH/Runner" 2>/dev/null || true
-          
-          # 处理 Frameworks
-          for framework in "$APP_PATH/Frameworks"/*.framework; do
-            if [ -d "$framework" ]; then
-              framework_name=$(basename "$framework" .framework)
-              binary_path="$framework/$framework_name"
-              if [ -f "$binary_path" ]; then
-                echo "Removing signature from framework: $framework_name"
-                codesign --remove-signature "$binary_path" 2>/dev/null || true
+          echo "=== Step 2: Sign Frameworks with ldid (bottom-up) ==="
+          # 先签名所有 Framework 内的二进制文件
+          if [ -d "$APP_PATH/Frameworks" ]; then
+            for framework in "$APP_PATH/Frameworks"/*.framework; do
+              if [ -d "$framework" ]; then
+                framework_name=$(basename "$framework" .framework)
+                binary_path="$framework/$framework_name"
+                if [ -f "$binary_path" ]; then
+                  echo "Signing framework binary: $framework_name"
+                  ldid -S "$binary_path" 2>&1 || echo "Warning: Failed to sign $framework_name"
+                fi
               fi
-            fi
-          done
+            done
+            
+            # 签名 dylib 文件
+            find "$APP_PATH/Frameworks" -name "*.dylib" -print0 | while IFS= read -r -d '' dylib; do
+              echo "Signing dylib: $(basename "$dylib")"
+              ldid -S "$dylib" 2>&1 || echo "Warning: Failed to sign $(basename "$dylib")"
+            done
+          fi
           
-          # 处理 dylib 文件
-          find "$APP_PATH/Frameworks" -name "*.dylib" -exec codesign --remove-signature {} \; 2>/dev/null || true
+          echo "=== Step 3: Sign main binary ==="
+          ldid -S "$APP_PATH/Runner" 2>&1 || echo "Warning: Failed to sign Runner"
           
-          echo "=== Step 3: Creating IPA package ==="
+          echo "=== Step 4: Verify binary structure ==="
+          # 检查二进制文件头
+          file "$APP_PATH/Runner"
+          otool -l "$APP_PATH/Runner" | grep -A2 LC_CODE_SIGNATURE || echo "No LC_CODE_SIGNATURE found (this may be OK)"
+          
+          echo "=== Step 5: Create Payload and package IPA ==="
           mkdir -p build/ios/iphoneos/Payload
           cp -R "$APP_PATH" build/ios/iphoneos/Payload/Runner.app
           
           cd build/ios/iphoneos/
-          zip -q -r ios_no_sign.ipa Payload
-          echo "IPA created successfully: ios_no_sign.ipa"
+          # 使用正确的压缩选项
+          zip -q -r -X ios_no_sign.ipa Payload
+          echo "IPA created successfully!"
           ls -la ios_no_sign.ipa
+          # 验证 IPA 内容
+          unzip -l ios_no_sign.ipa | head -20
           cd ../../..
 
       # 上传IPA至Artifacts
