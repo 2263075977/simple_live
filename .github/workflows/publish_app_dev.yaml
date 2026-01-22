@@ -86,66 +86,27 @@ jobs:
       - name: Build iOS App
         run: |
           cd simple_live_app
-          # 先用 flutter 构建，不签名
-          flutter build ios --release --no-codesign --no-tree-shake-icons
+          flutter build ios --release --no-codesign
 
-      # 安装 ldid 工具并创建正确签名的 IPA
-      - name: Install signing tools
-        run: |
-          brew install ldid
-
-      #创建兼容 SideStore 的 IPA (模拟砸壳应用的签名结构)
-      - name: Create properly signed IPA
+      #创建未签名的 IPA (可用 Sideloadly 安装)
+      - name: Create unsigned IPA
         run: |
           cd simple_live_app
           APP_PATH="build/ios/iphoneos/Runner.app"
           
-          echo "=== Step 1: Clean up existing signatures ==="
+          # 移除签名相关文件
           rm -rf "$APP_PATH/_CodeSignature"
           rm -f "$APP_PATH/embedded.mobileprovision"
           find "$APP_PATH/Frameworks" -name "_CodeSignature" -type d -exec rm -rf {} + 2>/dev/null || true
-          find "$APP_PATH/Frameworks" -name "*.mobileprovision" -exec rm -f {} + 2>/dev/null || true
           
-          echo "=== Step 2: Sign Frameworks with ldid (bottom-up) ==="
-          # 先签名所有 Framework 内的二进制文件
-          if [ -d "$APP_PATH/Frameworks" ]; then
-            for framework in "$APP_PATH/Frameworks"/*.framework; do
-              if [ -d "$framework" ]; then
-                framework_name=$(basename "$framework" .framework)
-                binary_path="$framework/$framework_name"
-                if [ -f "$binary_path" ]; then
-                  echo "Signing framework binary: $framework_name"
-                  ldid -S "$binary_path" 2>&1 || echo "Warning: Failed to sign $framework_name"
-                fi
-              fi
-            done
-            
-            # 签名 dylib 文件
-            find "$APP_PATH/Frameworks" -name "*.dylib" -print0 | while IFS= read -r -d '' dylib; do
-              echo "Signing dylib: $(basename "$dylib")"
-              ldid -S "$dylib" 2>&1 || echo "Warning: Failed to sign $(basename "$dylib")"
-            done
-          fi
-          
-          echo "=== Step 3: Sign main binary ==="
-          ldid -S "$APP_PATH/Runner" 2>&1 || echo "Warning: Failed to sign Runner"
-          
-          echo "=== Step 4: Verify binary structure ==="
-          # 检查二进制文件头
-          file "$APP_PATH/Runner"
-          otool -l "$APP_PATH/Runner" | grep -A2 LC_CODE_SIGNATURE || echo "No LC_CODE_SIGNATURE found (this may be OK)"
-          
-          echo "=== Step 5: Create Payload and package IPA ==="
+          # 创建 Payload 并打包
           mkdir -p build/ios/iphoneos/Payload
           cp -R "$APP_PATH" build/ios/iphoneos/Payload/Runner.app
           
           cd build/ios/iphoneos/
-          # 使用正确的压缩选项
-          zip -q -r -X ios_no_sign.ipa Payload
-          echo "IPA created successfully!"
+          zip -q -r ios_no_sign.ipa Payload
+          echo "IPA created: ios_no_sign.ipa"
           ls -la ios_no_sign.ipa
-          # 验证 IPA 内容
-          unzip -l ios_no_sign.ipa | head -20
           cd ../../..
 
       # 上传IPA至Artifacts

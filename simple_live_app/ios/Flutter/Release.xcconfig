@@ -1,10 +1,2 @@
 #include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"
 #include "Generated.xcconfig"
-
-// Fix for SideStore/AltStore ldid signing compatibility
-OTHER_LDFLAGS = $(inherited) -ObjC -lc++
-// Prevent code stripping that may cause ldid signature issues
-STRIP_INSTALLED_PRODUCT = NO
-STRIP_STYLE = none
-COPY_PHASE_STRIP = NO
-DEAD_CODE_STRIPPING = NO
