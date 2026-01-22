@@ -18,7 +18,7 @@ jobs:
       # 签出代码
       - uses: actions/checkout@v4
         with:
-          ref: dev
+          ref: main
 
       # APK签名设置 - DISABLED
       # - name: Download Android keystore
@@ -181,7 +181,7 @@ jobs:
       # 签出代码
       - uses: actions/checkout@v4
         with:
-          ref: dev
+          ref: main
       # 设置Flutter环境
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
