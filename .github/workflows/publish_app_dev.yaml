@@ -88,31 +88,22 @@ jobs:
           cd simple_live_app
           flutter build ios --release --no-codesign
 
-      #创建未签名ipa（完全移除签名以兼容 LiveContainer）
+      #创建 Ad-Hoc 签名 IPA (兼容 LiveContainer)
       - name: Create IPA
         run: |
           cd simple_live_app
           APP_PATH="build/ios/iphoneos/Runner.app"
           
-          # 使用 codesign 移除主二进制文件的签名
-          codesign --remove-signature "$APP_PATH/Runner" || true
-          
-          # 移除所有 Framework 中的签名
-          find "$APP_PATH/Frameworks" -name "*.framework" -type d | while read framework; do
-            framework_name=$(basename "$framework" .framework)
-            if [ -f "$framework/$framework_name" ]; then
-              codesign --remove-signature "$framework/$framework_name" || true
-            fi
-          done
-          
-          # 移除所有 dylib 的签名
-          find "$APP_PATH" -name "*.dylib" -type f -exec codesign --remove-signature {} \; 2>/dev/null || true
-          
-          # 移除所有签名相关目录和文件
+          # 移除之前的签名（如果有）
           rm -rf "$APP_PATH/_CodeSignature"
-          rm -f "$APP_PATH/embedded.mobileprovision"
-          find "$APP_PATH/Frameworks" -name "_CodeSignature" -type d -exec rm -rf {} + 2>/dev/null || true
-          find "$APP_PATH/Frameworks" -name "embedded.mobileprovision" -delete 2>/dev/null || true
+          
+          # 使用 codesign 进行 Ad-Hoc 签名 (-s -)
+          # 这会生成标准的 Mach-O 签名头和 CodeResources 资源文件
+          # LiveContainer 需要这种标准的结构才能正常工作
+          codesign -s - --force --deep "$APP_PATH"
+          
+          # 验证签名
+          codesign -v -vvvv "$APP_PATH"
           
           # 创建 Payload 目录并复制 app
           mkdir -p build/ios/iphoneos/Payload
