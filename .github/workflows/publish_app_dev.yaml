@@ -88,12 +88,20 @@ jobs:
           cd simple_live_app
           flutter build ios --release --no-codesign
 
-      #创建未签名ipa
+      #创建未签名ipa（移除签名信息以兼容LiveContainer）
       - name: Create IPA
         run: |
           cd simple_live_app
-          mkdir build/ios/iphoneos/Payload
+          # 移除所有签名相关文件
+          rm -rf build/ios/iphoneos/Runner.app/_CodeSignature
+          rm -f build/ios/iphoneos/Runner.app/embedded.mobileprovision
+          # 移除所有 Frameworks 中的签名
+          find build/ios/iphoneos/Runner.app/Frameworks -name "_CodeSignature" -type d -exec rm -rf {} + 2>/dev/null || true
+          find build/ios/iphoneos/Runner.app/Frameworks -name "*.framework" -type d -exec rm -rf {}/_CodeSignature \; 2>/dev/null || true
+          # 创建 Payload 目录并复制 app
+          mkdir -p build/ios/iphoneos/Payload
           cp -R build/ios/iphoneos/Runner.app build/ios/iphoneos/Payload/Runner.app
+          # 打包为 IPA
           cd build/ios/iphoneos/
           zip -q -r ios_no_sign.ipa Payload
           cd ../../..
