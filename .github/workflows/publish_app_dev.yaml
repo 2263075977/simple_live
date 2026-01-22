@@ -88,35 +88,31 @@ jobs:
           cd simple_live_app
           flutter build ios --release --no-codesign
 
-      #安装 ldid
-      - name: Install ldid
-        run: |
-          brew install ldid
-
-      #创建未签名ipa（使用 ldid 重新签名以兼容 LiveContainer）
+      #创建未签名ipa（完全移除签名以兼容 LiveContainer）
       - name: Create IPA
         run: |
           cd simple_live_app
           APP_PATH="build/ios/iphoneos/Runner.app"
           
-          # 移除所有签名相关文件
+          # 使用 codesign 移除主二进制文件的签名
+          codesign --remove-signature "$APP_PATH/Runner" || true
+          
+          # 移除所有 Framework 中的签名
+          find "$APP_PATH/Frameworks" -name "*.framework" -type d | while read framework; do
+            framework_name=$(basename "$framework" .framework)
+            if [ -f "$framework/$framework_name" ]; then
+              codesign --remove-signature "$framework/$framework_name" || true
+            fi
+          done
+          
+          # 移除所有 dylib 的签名
+          find "$APP_PATH" -name "*.dylib" -type f -exec codesign --remove-signature {} \; 2>/dev/null || true
+          
+          # 移除所有签名相关目录和文件
           rm -rf "$APP_PATH/_CodeSignature"
           rm -f "$APP_PATH/embedded.mobileprovision"
           find "$APP_PATH/Frameworks" -name "_CodeSignature" -type d -exec rm -rf {} + 2>/dev/null || true
-          
-          # 使用 ldid 为主二进制文件创建空签名
-          ldid -S "$APP_PATH/Runner"
-          
-          # 为所有 Framework 中的二进制文件创建空签名
-          find "$APP_PATH/Frameworks" -type f -perm +111 -exec ldid -S {} \; 2>/dev/null || true
-          for framework in "$APP_PATH/Frameworks"/*.framework; do
-            if [ -d "$framework" ]; then
-              framework_name=$(basename "$framework" .framework)
-              if [ -f "$framework/$framework_name" ]; then
-                ldid -S "$framework/$framework_name"
-              fi
-            fi
-          done
+          find "$APP_PATH/Frameworks" -name "embedded.mobileprovision" -delete 2>/dev/null || true
           
           # 创建 Payload 目录并复制 app
           mkdir -p build/ios/iphoneos/Payload
